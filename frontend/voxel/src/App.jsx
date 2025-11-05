@@ -340,6 +340,9 @@ export default function Game() {
 
   const chunkSize = 32;
 
+
+
+
   const initializeServerConnection = useCallback(async () => {
     try {
       const data = {
@@ -366,7 +369,7 @@ export default function Game() {
       console.error('Failed to connect to central server:', error);
       setServerStatus('Connection Failed - Using Local');
     }
-  }, [playerId]);
+  }, [playerId,serverAddr]);
 
   // Initialize server connection only once when component mounts
   useEffect(() => {
@@ -401,10 +404,11 @@ export default function Game() {
     const chunkKey = getChunkKey(chunkId);
     //console.log(chunks)
     // If chunk already exists, return it
-    if (chunks[chunkKey]) {
-      return chunks[chunkKey];
-    }
+    // if (chunks[chunkKey]) {
+    //   return chunks[chunkKey];
+    // }
 
+    var currentChunkID = getChunkIdFromPosition(playerPosition[0],playerPosition[2])
 
     console.log(chunkId)
     var chunkX = Math.round(chunkId.IDX)
@@ -431,21 +435,106 @@ export default function Game() {
       if (response.success) {
         // Server returned chunk data
         setServerStatus('Connected');
-        const serverChunk = {
-          cells: response.data.cells && Array(chunkSize).fill().map(() => Array(chunkSize).fill(false)),
+        if(response.message != serverAddr){
+          setServerAddr(response.message)
+
+           const new_response = await apiCall('/player/data', {
+            player_id : playerId,
+            chunk_id :chunk_id,
+            player: {
+              ID: playerId,
+              PosX: Math.round(playerPosition[0]),
+              PosY: Math.round(playerPosition[2]),
+              chunk_id : chunk_id
+            }
+          },response.message);
+          console.log(new_response)
+
+           var updated_cubes = []
+        response.data.cells.forEach((cube) => {
+          const position = [cube.x, cube.height, cube.z]
+          var new_cube = {
+            cube_id : cube.cube_id, 
+            position : position, 
+            color : cube.color
+          }
+
+          updated_cubes.push(new_cube)
+        })
+    
+          const serverChunk = {
+          cells:  Array(chunkSize).fill().map(() => Array(chunkSize).fill(false)),
           offsetX: chunkId.IDX * chunkSize,
           offsetZ: chunkId.IDY * chunkSize,
           chunkX: chunkId.IDX,
           chunkZ: chunkId.IDY,
-          isEmpty: false
+          isEmpty: false,
+          cubes : updated_cubes
         };
+
+       
+        //setCubes(prev => [...prev, ...updated_cubes])
         
         setChunks(prev => ({
           ...prev,
           [chunkKey]: serverChunk
         }));
+        
+        // if(currentChunkID.IDX === chunkId.IDX  && currentChunkID.IDY === chunkId.IDY){
+        //   setCubes(updated_cubes)
+        // }
 
-        setServerAddr(response.message)
+        setCubes((prev) => [...prev, ...updated_cubes])
+       // setCubes(updated_cubes)
+       // setServerAddr(response.message)
+      //    if (new_response.data.cubes) {
+      //   updateCubesFromChunk(response.data.cubes, chunkId);
+      // }
+        
+        return serverChunk;
+
+        }
+
+        var updated_cubes = []
+        response.data.cells.forEach((cube) => {
+          const position = [cube.x, cube.height, cube.z]
+          var new_cube = {
+            cube_id : cube.cube_id, 
+            position : position, 
+            color : cube.color
+          }
+
+          updated_cubes.push(new_cube)
+        })
+        
+        const serverChunk = {
+          cells: Array(chunkSize).fill().map(() => Array(chunkSize).fill(false)),
+          offsetX: chunkId.IDX * chunkSize,
+          offsetZ: chunkId.IDY * chunkSize,
+          chunkX: chunkId.IDX,
+          chunkZ: chunkId.IDY,
+          isEmpty: false,
+          cubes : updated_cubes
+        };
+        
+       
+       // setCubes(prev => [...prev, ...updated_cubes])
+        setChunks(prev => ({
+          ...prev,
+          [chunkKey]: serverChunk
+        }));
+
+        // if(currentChunkID.IDX === chunkId.IDX  && currentChunkID.IDY === chunkId.IDY){
+        //   setCubes(updated_cubes)
+        // }
+
+        setCubes((prev) => [...prev, ...updated_cubes])
+      //  setCubes(updated_cubes)
+       // setServerAddr(response.message)
+
+      //    if (response.data.cubes) {
+      //   updateCubesFromChunk(response.data.cubes, chunkId);
+      // }
         
         return serverChunk;
       } else {
@@ -464,9 +553,10 @@ export default function Game() {
       
       return emptyChunk;
     }
-  }, [chunks, playerId, playerPosition]);
+  }, [chunks, playerId, playerPosition,serverAddr]);
 
   // Load surrounding chunks when player moves
+  // change this according to specs
   const loadSurroundingChunks = useCallback(async (centerChunkId) => {
     const loadRadius = 1; // Load chunks within 1 chunk distance
 
@@ -487,69 +577,134 @@ export default function Game() {
   const pollServerForUpdates = useCallback(async () => {
     if (!gameStarted) return;
 
-    try {
+  //  try {
       const currentChunkId = getCurrentChunkId();
-      
-      // Update current chunk state
       setCurrentChunk(currentChunkId);
       
-      // Load surrounding chunks
-
-      // change this radius of updation 
 
       await loadSurroundingChunks(currentChunkId);
 
-      const playerData = {
-        ID: playerId,
-        PosX: Math.round(playerPosition[0]),
-        PosY: Math.round(playerPosition[2])
-      };
-
-     
-
       // Update server with player position
-      const response = await apiCall('/player/move', {
-        player_id: playerId,
-        x: Math.round(playerPosition[0]),
-        y: Math.round(playerPosition[2]),
-        chunk_id: currentChunkId
-      },serverAddr);
+//       const response = await apiCall('/player/move', {
+//         player_id: playerId,
+//         x: Math.round(playerPosition[0]),
+//         y: Math.round(playerPosition[2]),
+//         chunk_id: currentChunkId
+//       },serverAddr);
+//       console.log(response)
+// if (response.success) {
+//       setServerStatus('Connected');
+//       setLastUpdate(new Date().toLocaleTimeString());
 
-      if (response.success) {
-        setServerStatus('Connected');
-        
-        // If server sends back cube data, update cubes
-        if (response.data && response.data.cubes) {
-          const serverCubes = response.data.cubes.map(cube => ({
-            id: `server_cube_${cube.x}_${cube.z}_${cube.height}`,
-            position: [cube.x, cube.height, cube.z],
-            color: cube.color || '#ff0000'
-          }));
-          
-          setCubes(prev => {
-            const localCubes = prev.filter(cube => !cube.id.startsWith('server_cube_'));
-            return [...localCubes, ...serverCubes];
-          });
+//       if (response.data){
 
-          //setServerAddr(response.message)
-        }
+//         const chunkKey = getChunkKey(currentChunkId)
 
-        setLastUpdate(new Date().toLocaleTimeString());
-      } else {
-        setServerStatus('Error: ' + response.message);
-      }
-    } catch (error) {
-      setServerStatus('Connection Failed - Using Local');
-      console.error('Polling error:', error);
-    }
-  }, [gameStarted, playerId, playerPosition, getCurrentChunkId, loadSurroundingChunks]);
+//         var focus_chunk = chunks[chunkKey]
+//         var updated_cubes = []
+//         // see for this optimization 2 loops inducing lag hence maybe increase the poll interval 
+//         for( var cube of response.data.cells ){
+//             var ok = true 
+
+//             for (var compare_cube of focus_chunk.cubes){
+//               if( cube.cube_id === compare_cube.cube_id){
+//                   ok = false
+//                   break
+//               }
+//             }
+
+//             if(ok){
+//               var new_cube = {
+//                 cube_id : cube.cube_id, 
+//                 position : [cube.x, cube.height, cube.z],
+//                 color : cube.color 
+//               }
+//               updated_cubes.push(new_cube)
+//             }
+//         }
+
+//         focus_chunk.cubes = [...focus_chunk.cubes, ...updated_cubes]
+//         chunks[chunkKey] = focus_chunk
+//         setChunks(chunks)
+//       }
+    
+//       //  loadChunk(currentChunkId)
+//     //  if (response.data) {
+//     //     const updatedChunks = {};
+//     //     const updatedCubes = [];
+
+//     //     // Iterate through all chunks sent from server
+//     //     //for (const chunk of response.data.chunks) {
+//     //     var chunk = response.data
+//     //       const chunkKey = `${chunk.id_x},${chunk.id_y}`;
+
+//     //       // Update chunk info
+//     //       updatedChunks[chunkKey] = {
+//     //         cells: Array(chunkSize).fill().map(() => Array(chunkSize).fill(false)),
+//     //         offsetX: chunk.id_x * chunkSize,
+//     //         offsetZ: chunk.id_y * chunkSize,
+//     //         chunkX: chunk.id_x,
+//     //         chunkZ: chunk.id_y,
+//     //         isEmpty: false,
+//     //         cubes : chunk.cells
+//     //       };
+
+//     //       // Extract cubes for this chunk
+//     //       if (chunk.cells && Array.isArray(chunk.cells)) {
+//     //         chunk.cells.forEach((cube) => {
+//     //           updatedCubes.push({
+//     //             id: `server_cube_${cube.x}_${cube.z}_${cube.height}`,
+//     //             position: [cube.x, cube.height, cube.z],
+//     //             color: cube.color || '#ff0000'
+//     //           });
+//     //         });
+//     //       }
+//     // //    }
+
+
+//     //     setChunks((prev) => ({
+//     //       ...prev,
+//     //       ...updatedChunks
+//     //     }));
+
+//         // setCubes(updatedCubes)
+//         // setCubes((prev) => {
+//         //   const local = prev.filter((cube) => !cube.id.startsWith('server_cube_'));
+//         //   const seen = new Set();
+//         //   const merged = [];
+
+//         //   for (const cube of [...local, ...updatedCubes]) {
+//         //     const key = `${cube.position[0]}_${cube.position[1]}_${cube.position[2]}`;
+//         //     if (!seen.has(key)) {
+//         //       merged.push(cube);
+//         //       seen.add(key);
+//         //     }
+//         //   }
+
+//         //   return merged;
+//         // });
+//      // }
+//   }
+//     else {
+//       setServerStatus('Error: ' + response.message);
+//     }
+//   } catch (error) {
+//     console.error('Polling error:', error);
+//     setServerStatus('Connection Failed - Using Local');
+//   }
+
+}, [gameStarted, playerId, playerPosition, getCurrentChunkId, loadSurroundingChunks, serverAddr]);
 
   // Setup polling interval
   useEffect(() => {
     if (!gameStarted) return;
 
-    const interval = setInterval(pollServerForUpdates, 200); // Poll every 5 seconds
-    return () => clearInterval(interval);
+    const interval = setInterval(pollServerForUpdates, 5000); // Poll every 5 seconds
+    //const chunkUpdateInterval = setInterval(checkChunkUpdates, 1000); // Check every second
+    return () => {
+      clearInterval(interval);
+   //   clearInterval(chunkUpdateInterval);
+    }
   }, [gameStarted, pollServerForUpdates]);
 
   // Handle cell clicks with chunk awareness
@@ -558,9 +713,14 @@ export default function Game() {
 
     const worldX = x + offsetX;
     const worldZ = z + offsetZ;
-    
+    const chunkId = getChunkIdFromPosition(playerPosition[0],playerPosition[2])
+    const chunkKey = getChunkKey(chunkId)
+
+    var focus_chunk = chunks[chunkKey]
+    console.log(focus_chunk)
+    //var cubes = focus_chunk.cubes
     // Find the highest cube at this position
-    const existingCubes = cubes.filter(cube => 
+    const existingCubes = focus_chunk.cubes.filter(cube => 
       Math.round(cube.position[0]) === worldX && 
       Math.round(cube.position[2]) === worldZ
     );
@@ -572,18 +732,24 @@ export default function Game() {
     const position = [worldX, height, worldZ];
 
     const newCube = {
-      id: `cube_${worldX}_${worldZ}_${height}_${Date.now()}`,
+      cube_id: `cube_${worldX}_${worldZ}_${height}`,
       position,
       color: selectedColor
     };
 
+    focus_chunk.cubes.push(newCube)
+    chunks[chunkKey] = focus_chunk
+    setChunks(chunks)
+
     setCubes((prev) => [...prev, newCube]);
+
+    
     console.log('Placed cube at:', position);
 
     // send server the update about cube placed in this chunk 
 
     var new_cube = {
-      cube_id : newCube.id, 
+      cube_id : newCube.cube_id, 
       x : worldX, 
       z : worldZ,
       height : height, 
@@ -633,7 +799,7 @@ export default function Game() {
       const topCube = cubesAtPosition.reduce((highest, cube) =>
         cube.position[1] > highest.position[1] ? cube : highest
       );
-      setCubes((prev) => prev.filter((cube) => cube.id !== topCube.id));
+      setCubes((prev) => prev.filter((cube) => cube.cube_id !== topCube.cube_id));
       console.log('Removed cube at:', worldX, worldZ);
 
       // send server the update to server that cube got removed 
@@ -645,7 +811,7 @@ export default function Game() {
       }
 
       const dlt_req = {
-            cube_id : topCube.id, 
+            cube_id : topCube.cube_id, 
             chunk_id : current_chunk_id
       }
 
@@ -662,7 +828,7 @@ export default function Game() {
 
   const handleCubeRightClick = async (cubeId) => {
     if (!gameStarted) return;
-    setCubes((prev) => prev.filter((cube) => cube.id !== cubeId));
+    setCubes((prev) => prev.filter((cube) => cube.cube_id !== cubeId));
     console.log('Removed cube:', cubeId);
 
      var chunkid = getCurrentChunkId()
@@ -741,7 +907,7 @@ export default function Game() {
             key={cube.id}
             position={cube.position}
             color={cube.color}
-            onRightClick={() => handleCubeRightClick(cube.id)}
+            onRightClick={() => handleCubeRightClick(cube.cube_id)}
             playerPosition={playerPosition}
           />
         ))}
