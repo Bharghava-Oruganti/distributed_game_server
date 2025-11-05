@@ -480,11 +480,11 @@ export default function Game() {
           [chunkKey]: serverChunk
         }));
         
-        // if(currentChunkID.IDX === chunkId.IDX  && currentChunkID.IDY === chunkId.IDY){
-        //   setCubes(updated_cubes)
-        // }
+        if(currentChunkID.IDX === chunkId.IDX  && currentChunkID.IDY === chunkId.IDY){
+          setCubes(updated_cubes)
+        }
 
-        setCubes((prev) => [...prev, ...updated_cubes])
+      //  setCubes((prev) => [...prev, ...updated_cubes])
        // setCubes(updated_cubes)
        // setServerAddr(response.message)
       //    if (new_response.data.cubes) {
@@ -524,11 +524,11 @@ export default function Game() {
           [chunkKey]: serverChunk
         }));
 
-        // if(currentChunkID.IDX === chunkId.IDX  && currentChunkID.IDY === chunkId.IDY){
-        //   setCubes(updated_cubes)
-        // }
+        if(currentChunkID.IDX === chunkId.IDX  && currentChunkID.IDY === chunkId.IDY){
+          setCubes(updated_cubes)
+        }
 
-        setCubes((prev) => [...prev, ...updated_cubes])
+    //    setCubes((prev) => [...prev, ...updated_cubes])
       //  setCubes(updated_cubes)
        // setServerAddr(response.message)
 
