@@ -5,11 +5,19 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"sync"
 	"time"
 )
 
-// HTTP request structures
+// ===================== Config =====================
+
+const (
+	gameServerUDP = "172.16.118.72:9000" // your game server UDP address
+	udpTimeout    = 5 * time.Second      // per request timeout
+	udpBufSize    = 65535                // max safe UDP datagram size
+)
+
+// ===================== HTTP request structures =====================
+
 type HTTPAddCubeRequest struct {
 	Cube    Cube    `json:"cube"`
 	ChunkID ChunkID `json:"chunk_id"`
@@ -48,48 +56,53 @@ type HTTPResponse struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-var (
-	udpConn   *net.UDPConn
-	httpMutex sync.Mutex
-)
+// ===================== UDP bridge =====================
 
-// sendUDPRequest sends a request to UDP server and waits for response
+// sendUDPRequest opens a dedicated UDP socket for this request.
+// This avoids race conditions when multiple clients hit the same chunk.
 func sendUDPRequest(req Request, timeout time.Duration) (Response, error) {
-	httpMutex.Lock()
-	defer httpMutex.Unlock()
+	// local ephemeral UDP socket
+	conn, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		return Response{}, err
+	}
+	defer conn.Close()
 
-	// Marshal request
+	// marshal request
 	data, err := json.Marshal(req)
 	if err != nil {
 		return Response{}, err
 	}
 
-	// Send to UDP server
-	udpAddr, err := net.ResolveUDPAddr("udp", "172.16.118.72:9000")
+	// resolve server
+	udpAddr, err := net.ResolveUDPAddr("udp", gameServerUDP)
 	if err != nil {
 		return Response{}, err
 	}
 
-	_, err = udpConn.WriteToUDP(data, udpAddr)
+	// send
+	if _, err := conn.WriteToUDP(data, udpAddr); err != nil {
+		return Response{}, err
+	}
+
+	// receive
+	buf := make([]byte, udpBufSize)
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	n, _, err := conn.ReadFromUDP(buf)
 	if err != nil {
 		return Response{}, err
 	}
 
-	// Wait for response with timeout
-	buffer := make([]byte, 2048)
-	udpConn.SetReadDeadline(time.Now().Add(timeout))
-	n, _, err := udpConn.ReadFromUDP(buffer)
-	if err != nil {
+	var resp Response
+	if err := json.Unmarshal(buf[:n], &resp); err != nil {
+		log.Printf("❌ JSON unmarshal failed. Raw=%q err=%v", string(buf[:n]), err)
 		return Response{}, err
 	}
 
-	var response Response
-	if err := json.Unmarshal(buffer[:n], &response); err != nil {
-		return Response{}, err
-	}
-
-	return response, nil
+	return resp, nil
 }
+
+// ===================== HTTP handlers =====================
 
 func handleMovePlayerHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -103,26 +116,20 @@ func handleMovePlayerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create UDP request
 	udpReq := Request{
 		Type:    "MOVE_PLAYER",
 		Player:  Player{ID: moveReq.PlayerID, PosX: moveReq.X, PosY: moveReq.Y},
 		ChunkID: moveReq.ChunkID,
 	}
 
-	response, err := sendUDPRequest(udpReq, 5*time.Second)
+	resp, err := sendUDPRequest(udpReq, udpTimeout)
 	if err != nil {
-		log.Printf("❌ Error communicating with UDP server: %v", err)
+		log.Printf("❌ UDP MOVE_PLAYER error: %v", err)
 		http.Error(w, "Failed to communicate with game server", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: response.Success,
-		Message: response.Message,
-		Data:    response.GameData,
-	})
+	writeJSON(w, HTTPResponse{Success: resp.Success, Message: resp.Message, Data: resp.GameData})
 }
 
 func handleAddCubeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -143,20 +150,16 @@ func handleAddCubeHTTP(w http.ResponseWriter, r *http.Request) {
 		Cube:    dataReq.Cube,
 	}
 
-	log.Printf("Request chunk id is", dataReq)
-	//log.Printf("Request from client is,", udpReq.Player)
-	response, err := sendUDPRequest(udpReq, 5*time.Second)
+	log.Printf("ADD_CUBE req: %+v", dataReq)
+
+	resp, err := sendUDPRequest(udpReq, udpTimeout)
 	if err != nil {
-		log.Printf("❌ Error communicating with UDP server: %v", err)
+		log.Printf("❌ UDP ADD_CUBE error: %v", err)
 		http.Error(w, "Failed to communicate with game server", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: response.Success,
-		Message: response.Message,
-	})
+	writeJSON(w, HTTPResponse{Success: resp.Success, Message: resp.Message})
 }
 
 func handleDltCubeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -177,20 +180,16 @@ func handleDltCubeHTTP(w http.ResponseWriter, r *http.Request) {
 		CubeID:  dataReq.CubeID,
 	}
 
-	log.Printf("Request chunk id is", dataReq)
-	//log.Printf("Request from client is,", udpReq.Player)
-	response, err := sendUDPRequest(udpReq, 5*time.Second)
+	log.Printf("DLT_CUBE req: %+v", dataReq)
+
+	resp, err := sendUDPRequest(udpReq, udpTimeout)
 	if err != nil {
-		log.Printf("❌ Error communicating with UDP server: %v", err)
+		log.Printf("❌ UDP DLT_CUBE error: %v", err)
 		http.Error(w, "Failed to communicate with game server", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: response.Success,
-		Message: response.Message,
-	})
+	writeJSON(w, HTTPResponse{Success: resp.Success, Message: resp.Message})
 }
 
 func handleGetDataHTTP(w http.ResponseWriter, r *http.Request) {
@@ -211,21 +210,16 @@ func handleGetDataHTTP(w http.ResponseWriter, r *http.Request) {
 		ChunkID: dataReq.ChunkID,
 	}
 
-	log.Printf("Request chunk id is", dataReq)
-	//log.Printf("Request from client is,", udpReq.Player)
-	response, err := sendUDPRequest(udpReq, 5*time.Second)
+	log.Printf("GET_DATA req: %+v", dataReq)
+
+	resp, err := sendUDPRequest(udpReq, udpTimeout)
 	if err != nil {
-		log.Printf("❌ Error communicating with UDP server: %v", err)
+		log.Printf("❌ UDP GET_DATA error: %v", err)
 		http.Error(w, "Failed to communicate with game server", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: response.Success,
-		Message: response.Message,
-		Data:    response.Chunk,
-	})
+	writeJSON(w, HTTPResponse{Success: resp.Success, Message: resp.Message, Data: resp.Chunk})
 }
 
 func handleGetUpdatesHTTP(w http.ResponseWriter, r *http.Request) {
@@ -246,19 +240,14 @@ func handleGetUpdatesHTTP(w http.ResponseWriter, r *http.Request) {
 		ChunkID: dataReq.ChunkID,
 	}
 
-	response, err := sendUDPRequest(udpReq, 5*time.Second)
+	resp, err := sendUDPRequest(udpReq, udpTimeout)
 	if err != nil {
-		log.Printf("❌ Error communicating with UDP server: %v", err)
+		log.Printf("❌ UDP GET_UPDATES error: %v", err)
 		http.Error(w, "Failed to communicate with game server", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: response.Success,
-		Message: response.Message,
-		Data:    response.GameData,
-	})
+	writeJSON(w, HTTPResponse{Success: resp.Success, Message: resp.Message, Data: resp.GameData})
 }
 
 func handleDeletePlayerHTTP(w http.ResponseWriter, r *http.Request) {
@@ -278,30 +267,23 @@ func handleDeletePlayerHTTP(w http.ResponseWriter, r *http.Request) {
 		Player: Player{ID: dataReq.PlayerID},
 	}
 
-	response, err := sendUDPRequest(udpReq, 5*time.Second)
+	resp, err := sendUDPRequest(udpReq, udpTimeout)
 	if err != nil {
-		log.Printf("❌ Error communicating with UDP server: %v", err)
+		log.Printf("❌ UDP DLT_PLAYER error: %v", err)
 		http.Error(w, "Failed to communicate with game server", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: response.Success,
-		Message: response.Message,
-	})
+	writeJSON(w, HTTPResponse{Success: resp.Success, Message: resp.Message})
 }
 
 func handleHealthCheck(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(HTTPResponse{
-		Success: true,
-		Message: "HTTP Gateway is running",
-	})
+	writeJSON(w, HTTPResponse{Success: true, Message: "HTTP Gateway is running"})
 }
 
+// ===================== HTTP bootstrap =====================
+
 func startHTTPServer() {
-	// Register HTTP routes with CORS
 	http.HandleFunc("/api/player/move", enableCORS(handleMovePlayerHTTP))
 	http.HandleFunc("/api/player/data", enableCORS(handleGetDataHTTP))
 	http.HandleFunc("/api/player/updates", enableCORS(handleGetUpdatesHTTP))
@@ -317,21 +299,15 @@ func startHTTPServer() {
 }
 
 func main() {
-	// Initialize UDP connection for HTTP gateway
-	var err error
-	udpAddr, err := net.ResolveUDPAddr("udp", ":0") // Use any available port
-	if err != nil {
-		log.Fatal("Failed to resolve UDP addr:", err)
-	}
-
-	udpConn, err = net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		log.Fatal("Failed to create UDP connection:", err)
-	}
-	defer udpConn.Close()
-
-	log.Printf("🔗 HTTP Gateway UDP listener on %s", udpConn.LocalAddr().String())
-
-	// Start HTTP server
+	// no shared UDP socket needed anymore
 	startHTTPServer()
 }
+
+// ===================== Helpers =====================
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+
